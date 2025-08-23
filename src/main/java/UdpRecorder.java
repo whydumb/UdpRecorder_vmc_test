@@ -8,6 +8,7 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketException;
 import java.net.UnknownHostException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.concurrent.locks.LockSupport;
 import java.util.logging.Level;
@@ -190,6 +191,7 @@ public class UdpRecorder {
         private final JButton stopButton = new JButton("Stop");
         private final JButton loadButton = new JButton("Load");
         private final JButton saveButton = new JButton("Save");
+        private final JButton exportPcapButton = new JButton("Export to Pcap");
         private final JTextField portField = new JTextField("39539");
         private final JLabel statusLabel = new JLabel("");
 
@@ -233,6 +235,8 @@ public class UdpRecorder {
             addItem(loadButton, 0, 4);
             saveButton.addActionListener(this::save);
             addItem(saveButton, 1, 4);
+            exportPcapButton.addActionListener(this::exportPcap);
+            addItem(exportPcapButton, 0, 5, 2, 1);
         }
 
         private void updateStatus() {
@@ -244,6 +248,7 @@ public class UdpRecorder {
                     stopButton.setEnabled(false);
                     loadButton.setEnabled(true);
                     saveButton.setEnabled(recordEntries != null);
+                    exportPcapButton.setEnabled(recordEntries != null);
                 }
                 case Status.Recording(var startTime, var recorder) -> {
                     statusLabel.setText("Recording");
@@ -252,6 +257,7 @@ public class UdpRecorder {
                     stopButton.setEnabled(true);
                     loadButton.setEnabled(false);
                     saveButton.setEnabled(false);
+                    exportPcapButton.setEnabled(false);
                 }
                 case Status.Replaying(var startTime, var replayer) -> {
                     statusLabel.setText("Replaying");
@@ -260,6 +266,7 @@ public class UdpRecorder {
                     stopButton.setEnabled(true);
                     loadButton.setEnabled(false);
                     saveButton.setEnabled(false);
+                    exportPcapButton.setEnabled(false);
                 }
             }
         }
@@ -389,6 +396,114 @@ public class UdpRecorder {
             } catch (IOException ex) {
                 reportError(ex);
             }
+        }
+
+        private JFileChooser exportChooser;
+        private void exportPcap(ActionEvent e) {
+            var entries = recordEntries;
+            if (entries == null) {
+                return;
+            }
+            if (exportChooser == null) {
+                exportChooser = new JFileChooser();
+                exportChooser.setDialogTitle("Export to Pcap file");
+                exportChooser.setFileFilter(new FileNameExtensionFilter("Pcap file", "pcap"));
+            }
+            var result = exportChooser.showSaveDialog(this);
+            if (result != JFileChooser.APPROVE_OPTION) {
+                return;
+            }
+            var file = exportChooser.getSelectedFile();
+            if (file == null) {
+                return;
+            }
+            if (!file.getName().toLowerCase().endsWith(".pcap")) {
+                file = new File(file.getAbsolutePath() + ".pcap");
+            }
+
+            try (var outputStream = new DataOutputStream(new FileOutputStream(file))) {
+                var port = readPort();
+
+                // Pcap Global Header
+                outputStream.writeInt(0xa1b2c3d4); // Magic Number (Big-endian)
+                outputStream.writeShort(2);        // Version Major
+                outputStream.writeShort(4);        // Version Minor
+                outputStream.writeInt(0);          // Timezone
+                outputStream.writeInt(0);          // Timestamp Accuracy
+                outputStream.writeInt(65535);      // Snapshot Length (max)
+                outputStream.writeInt(101);        // Link-layer Header Type (101 = LINKTYPE_RAW, indicating raw IP)
+
+                for (var entry : entries) {
+                    var timestampSec = (int) (entry.timestamp() / 1_000_000_000);
+                    var timestampUSec = (int) ((entry.timestamp() % 1_000_000_000) / 1000);
+
+                    // IP header (20 bytes) + UDP header (8 bytes)
+                    var totalLength = 20 + 8 + entry.data().length;
+
+                    // Pcap Packet Header
+                    outputStream.writeInt(timestampSec);
+                    outputStream.writeInt(timestampUSec);
+                    outputStream.writeInt(totalLength);
+                    outputStream.writeInt(totalLength);
+
+                    // IP Header
+                    var ipHeader = new byte[20];
+                    var ipBuffer = ByteBuffer.wrap(ipHeader);
+                    ipBuffer.put((byte) 0x45); // Version (4) + IHL (5)
+                    ipBuffer.put((byte) 0x00); // DSCP + ECN
+                    ipBuffer.putShort((short) totalLength);
+                    ipBuffer.putShort((short) 0x0001); // ID
+                    ipBuffer.putShort((short) 0x0000); // Flags + Fragment Offset
+                    ipBuffer.put((byte) 64);   // TTL
+                    ipBuffer.put((byte) 17);   // Protocol (17 = UDP)
+                    ipBuffer.putShort((short) 0);   // Checksum (initially 0)
+                    ipBuffer.put(new byte[] {127, 0, 0, 1}); // Source IP
+                    ipBuffer.put(new byte[] {127, 0, 0, 1}); // Destination IP
+
+                    // Recalculate IP checksum
+                    ipBuffer.putShort(10, (short) 0); // Clear old checksum
+                    ipBuffer.putShort(10, computeChecksum(ipHeader));
+                    outputStream.write(ipHeader);
+
+                    // UDP Header
+                    var udpHeader = new byte[8];
+                    var udpBuffer = ByteBuffer.wrap(udpHeader);
+                    udpBuffer.putShort((short) port); // Source Port
+                    udpBuffer.putShort((short) port); // Destination Port
+                    udpBuffer.putShort((short) (8 + entry.data().length)); // Length
+                    udpBuffer.putShort((short) 0); // Checksum (initially 0)
+
+                    // Recalculate UDP checksum with pseudo-header
+                    outputStream.write(udpHeader);
+
+                    // Raw UDP data
+                    outputStream.write(entry.data());
+                }
+            } catch (IllegalArgumentException | IOException ex) {
+                reportError(ex);
+            }
+        }
+
+        private short computeChecksum(byte[] buf) {
+            var length = buf.length;
+            var i = 0;
+            var sum = 0L;
+
+            while (length > 1) {
+                sum += ((buf[i] & 0xFF) << 8) | (buf[i+1] & 0xFF);
+                i += 2;
+                length -= 2;
+            }
+
+            if (length > 0) {
+                sum += (buf[i] & 0xFF) << 8;
+            }
+
+            while ((sum >> 16) > 0) {
+                sum = (sum & 0xffff) + (sum >> 16);
+            }
+
+            return (short) ~sum;
         }
     }
 }
