@@ -19,7 +19,7 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public class OSCRecorder {
+public class UdpRecorder {
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
             var frame = new UIFrame();
@@ -120,14 +120,14 @@ public class OSCRecorder {
     /**
      * OSC 메시지 레코더
      */
-    private static class OSCRecorder implements AutoCloseable {
+    private static class OSCMessageRecorder implements AutoCloseable {
         private OSCPortIn oscPort;
         private final ArrayList<OSCMessageData> messages = new ArrayList<>();
         private volatile boolean isRecording = false;
         private long startTime;
-        private final Logger logger = Logger.getLogger(OSCRecorder.class.getName());
+        private final Logger logger = Logger.getLogger(OSCMessageRecorder.class.getName());
 
-        public OSCRecorder(int port) throws SocketException {
+        public OSCMessageRecorder(int port) throws SocketException {
             try {
                 oscPort = new OSCPortIn(port);
                 oscPort.addPacketListener(new OSCPacketListener() {
@@ -156,7 +156,7 @@ public class OSCRecorder {
 
                     @Override
                     public void handleBadData(OSCBadDataEvent event) {
-                        logger.warning("Bad OSC data received: " + Arrays.toString(event.getData()));
+                        logger.warning("Bad OSC data received");
                     }
                 });
             } catch (SocketException e) {
@@ -171,7 +171,7 @@ public class OSCRecorder {
             isRecording = true;
             startTime = System.nanoTime();
             oscPort.startListening();
-            logger.info("OSC recording started on port " + oscPort.getLocalPort());
+            logger.info("OSC recording started on port " + port);
         }
 
         public void stop() {
@@ -336,7 +336,7 @@ public class OSCRecorder {
 
         private sealed interface Status {
             final class Idle implements Status {}
-            record Recording(OSCRecorder recorder) implements Status {}
+            record Recording(OSCMessageRecorder recorder) implements Status {}
             record Replaying(OSCReplayer replayer) implements Status {}
         }
 
@@ -441,7 +441,7 @@ public class OSCRecorder {
 
             try {
                 int port = readPort();
-                var recorder = new OSCRecorder(port);
+                var recorder = new OSCMessageRecorder(port);
                 recorder.start();
                 status = new Status.Recording(recorder);
                 updateStatus();
