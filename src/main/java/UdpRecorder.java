@@ -126,8 +126,10 @@ public class UdpRecorder {
         private volatile boolean isRecording = false;
         private long startTime;
         private final Logger logger = Logger.getLogger(OSCMessageRecorder.class.getName());
+        private final int port;
 
-        public OSCMessageRecorder(int port) throws SocketException {
+        public OSCMessageRecorder(int port) throws SocketException, IOException {
+            this.port = port;
             try {
                 oscPort = new OSCPortIn(port);
                 oscPort.addPacketListener(new OSCPacketListener() {
@@ -160,6 +162,9 @@ public class UdpRecorder {
                     }
                 });
             } catch (SocketException e) {
+                logger.severe("Failed to create OSC port: " + e.getMessage());
+                throw e;
+            } catch (IOException e) {
                 logger.severe("Failed to create OSC port: " + e.getMessage());
                 throw e;
             }
@@ -200,7 +205,11 @@ public class UdpRecorder {
         public void close() {
             stop();
             if (oscPort != null) {
-                oscPort.close();
+                try {
+                    oscPort.close();
+                } catch (IOException e) {
+                    logger.warning("Error closing OSC port: " + e.getMessage());
+                }
             }
         }
     }
@@ -216,7 +225,7 @@ public class UdpRecorder {
         private final Logger logger = Logger.getLogger(OSCReplayer.class.getName());
 
         public OSCReplayer(String host, int port, ArrayList<OSCMessageData> messages) 
-                throws SocketException, UnknownHostException {
+                throws SocketException, UnknownHostException, IOException {
             this.messages = messages;
             try {
                 this.oscPort = new OSCPortOut(InetAddress.getByName(host), port);
@@ -310,7 +319,11 @@ public class UdpRecorder {
         public void close() {
             stop();
             if (oscPort != null) {
-                oscPort.close();
+                try {
+                    oscPort.close();
+                } catch (IOException e) {
+                    logger.warning("Error closing OSC output port: " + e.getMessage());
+                }
             }
         }
     }
