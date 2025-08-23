@@ -339,23 +339,24 @@ public class UdpRecorder {
                 loadChooser = new JFileChooser();
                 loadChooser.setDialogTitle("Load record file");
                 loadChooser.setFileFilter(new FileNameExtensionFilter("UDP Record file", "urf"));
-                loadChooser.addActionListener($ -> {
-                    if (loadChooser.getSelectedFile() == null) {
-                        return;
-                    }
-                    try (var inputStream = new DataInputStream(new FileInputStream(loadChooser.getSelectedFile()))) {
-                        var length = inputStream.readInt();
-                        recordEntries = new ArrayList<>(length);
-                        for (var i = 0; i < length; i++) {
-                            recordEntries.add(RecordEntry.deserialize(inputStream));
-                        }
-                        updateStatus();
-                    } catch (IOException ex) {
-                        reportError(ex);
-                    }
-                });
             }
-            loadChooser.showOpenDialog(this);
+            var result = loadChooser.showOpenDialog(this);
+            if (result != JFileChooser.APPROVE_OPTION) {
+                return;
+            }
+            if (loadChooser.getSelectedFile() == null) {
+                return;
+            }
+            try (var inputStream = new DataInputStream(new FileInputStream(loadChooser.getSelectedFile()))) {
+                var length = inputStream.readInt();
+                recordEntries = new ArrayList<>(length);
+                for (var i = 0; i < length; i++) {
+                    recordEntries.add(RecordEntry.deserialize(inputStream));
+                }
+                updateStatus();
+            } catch (IOException ex) {
+                reportError(ex);
+            }
         }
 
         private JFileChooser saveChooser;
@@ -368,25 +369,26 @@ public class UdpRecorder {
                 saveChooser = new JFileChooser();
                 saveChooser.setDialogTitle("Save record file");
                 saveChooser.setFileFilter(new FileNameExtensionFilter("UDP Record file", "urf"));
-                saveChooser.addActionListener($ -> {
-                    var file = saveChooser.getSelectedFile();
-                    if (file == null) {
-                        return;
-                    }
-                    if (!file.getName().contains(".")) {
-                        file = new File(file.getAbsolutePath() + ".urf");
-                    }
-                    try (var outputStream = new DataOutputStream(new FileOutputStream(file))) {
-                        outputStream.writeInt(entries.size());
-                        for (var entry : entries) {
-                            entry.serialize(outputStream);
-                        }
-                    } catch (IOException ex) {
-                        reportError(ex);
-                    }
-                });
             }
-            saveChooser.showSaveDialog(this);
+            var result = saveChooser.showSaveDialog(this);
+            if (result != JFileChooser.APPROVE_OPTION) {
+                return;
+            }
+            var file = saveChooser.getSelectedFile();
+            if (file == null) {
+                return;
+            }
+            if (!file.getName().contains(".")) {
+                file = new File(file.getAbsolutePath() + ".urf");
+            }
+            try (var outputStream = new DataOutputStream(new FileOutputStream(file))) {
+                outputStream.writeInt(entries.size());
+                for (var entry : entries) {
+                    entry.serialize(outputStream);
+                }
+            } catch (IOException ex) {
+                reportError(ex);
+            }
         }
     }
 }
